@@ -7,8 +7,8 @@ import inspect
 
 def curry(f):
     """
-    The trick here is to replace the decorated function with an object
-    whose __call__ magic method simulates beta reduction.
+    The trick here is to replace the decorated function `f` with a
+    function that simulates beta reduction of `f`.
 
     By necessity, any side effects of `f` do not occur until enough
     arguments have been filled out to perform final evaluation; or,
@@ -18,56 +18,50 @@ def curry(f):
     But you wouldn't use functions that have side effects, you're
     much too smart for that.
     """
-    class Curried(object):
-        def __init__(self, func, args, kwargs):
-            self.func = func
-            self.args = args or []
-            self.kwargs = kwargs or {}
-            spec = inspect.getargspec(func)
-            if spec.varargs is not None:
-                raise ValueError('cannot curry varargs!')
-            if spec.keywords is not None:
-                raise ValueError('cannot curry kwargs!')
-            self.argnames = spec.args
-            self.defaults = spec.defaults
 
-        def __call__(self, *args, **kwargs):
-            """
-            Argument binding works left to right, or as named. We consider
-            it an error to bind any single argument more than once, whether
-            this is a named argument specified more than once, or a named
-            argument that had previously been filled positionally.
+    spec = inspect.getargspec(f)
+    if spec.varargs is not None:
+        raise ValueError('cannot curry varargs')
+    if spec.keywords is not None:
+        raise ValueError('cannot curry kwargs')
 
-            TODO: maybe it's reasonable to allow positional arguments to be
-            bound after keyword arguments? E.g., should the following:
+    # Value representing an unbound variable
+    undefined = object()
 
-                @curry
-                def f(a, b, c): ...
+    # Map argspec defaults to their parameter names
+    defaults = {
+        spec.args[-i]: spec.defaults[-i]
+        for i in range(1, len(spec.defaults)+1)
+    } if spec.defaults is not None else {}
 
-                f(b=1)(2, 3)
+    def beta(bindings, *args, **kwargs):
+        """
+        This function implements the 'beta reduction'-like step by binding
+        positional arguments left-to-right, then binding keyword arguments,
+        finally checking if the underlying function is fully bound (after
+        accounting for default arguments).
+        """
+        args = list(args)
+        bindings = list(bindings)
 
-            ...be well-defined? It's a fair question.
-            """
-            if self.kwargs and args:
-                raise SyntaxError('non-keyword arg after keyword arg')
-            args = self.args + list(args)
-            kwargs = dict(self.kwargs.items() + kwargs.items())
-            filled = self.argnames[:len(args)]
-            unfilled = self.argnames[len(args):]
+        for i, (name, value) in enumerate(bindings):
+            if args and value is undefined:
+                bindings[i] = (name, args.pop(0))
+            if name in kwargs:
+                bindings[i] = (name, kwargs.pop(name))
 
-            # make sure there are no duped kwargs
-            for kw in kwargs:
-                if kw in filled:
-                    raise TypeError('got multiple values for ' + kw)
-                if kw not in unfilled:
-                    raise TypeError('unexpected argument ' + kw)
-                unfilled.remove(kw)
+        if args:
+            raise TypeError('too many positional arguments', args)
+        if kwargs:
+            raise TypeError('unexpected keyword arguments', kwargs)
 
-            # TODO: apply defaults
+        callargs = map(lambda (name, value): value is not undefined and value
+                       or defaults.get(name, undefined), bindings)
 
-            if unfilled:
-                return Curried(self.func, args, kwargs)
-            else:
-                return self.func(*args, **kwargs)
+        if undefined in callargs:
+            return lambda *args, **kwargs: beta(bindings, *args, **kwargs)
+        else:
+            return f(*callargs)
 
-    return Curried(f, None, None)
+    # Start with a nullary beta reduction
+    return beta(((name, undefined) for name in spec.args))
