@@ -1,0 +1,7 @@
+*.swp
+*.pyc
+ve
+*.egg-info
+*.egg
+.coverage
+version.txt
